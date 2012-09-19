@@ -15,7 +15,7 @@ use File::Path qw/make_path/;
 use Data::Dumper;
 use Try::Tiny;
 use URI::Split qw/uri_split/;
-
+use Storable;
 
 
 my $inlinetags = qr{
@@ -27,18 +27,24 @@ my $inlinetags = qr{
 		 }x;
 
 
-
+# go there
 my $config = $ARGV[0];
 die "No config passed" unless ($config && -f $config);
-
 my ($filename, $filepath) = fileparse($config);
 print $filepath, "\n";
 chdir $filepath or die "Cannot chdir to $filepath $!\n";
 
+# old informations
+my $oldfeeds;
+my $oldfeedsfile = 'oldfeeds.db';
+if (-e $oldfeedsfile) {
+  $oldfeeds = retrieve($oldfeedsfile);
+} else {
+  die "Couldn't retrieve $oldfeedsfile";
+}
+
 # parse the config
-
 my %podcasts;
-
 open (my $fh, "<:encoding(utf-8)", $filename)
   or die "Cannot open $filename $!\n";
 while (<$fh>) {
@@ -47,43 +53,61 @@ while (<$fh>) {
   }
 }
 close $fh;
-
 exit unless %podcasts;
 
 ## setup the user agent
-
+my $fakeuseragent = 'Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9.1.16) Gecko/20110929 Iceweasel/3.5.16 (like Firefox/3.5.16)';
 my $ua = LWP::UserAgent->new;
 $ua->timeout(10);
-$ua->agent('Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9.1.16) Gecko/20110929 Iceweasel/3.5.16 (like Firefox/3.5.16)');
+$ua->agent($fakeuseragent);
 $ua->show_progress(1);
 my $treewriter = XML::TreePP->new();
 
-# download the feeds
 
+
+# download the feeds
 foreach my $pdc (keys %podcasts) {
   make_path("$pdc");
   my $response;
   my $feedfile = $pdc . ".feed";
+
+  # setup the header
+  my %header;
+  if (my $etag = $oldfeeds->{$pdc}->{etag}) {
+    $header{'If-None-Match'} = $etag;
+  }
+  elsif (my $since = $oldfeeds->{$pdc}->{since}) {
+    $header{'If-Modified-Since'} = $since;
+  }
+
   try {
-    $response = $ua->mirror($podcasts{$pdc}, $feedfile);
+    $response = $ua->get($podcasts{$pdc}, %header);
   } catch {
-    print;
+    print $_;
     next;
   };
   if ($response->is_success) {
+    $oldfeeds->{$pdc}->{etag} = $response->header('Etag');
+    $oldfeeds->{$pdc}->{since} = $response->header('Last-Modified') || $response->header('Date');
     print "Working on $feedfile\n";
-    parse_and_download($feedfile);
+    parse_and_download($response);
   }
 }
 
+print "Storing metainfo...";
+store $oldfeeds, $oldfeedsfile;
+
 sub parse_and_download {
-  my $feedfile = shift;
-  my $feed = XML::FeedPP->new($feedfile,
+  my $r = shift;
+  my $feedstring = $r->decoded_content;
+  my $feed = XML::FeedPP->new($feedstring,
 			      utf8_flag => 1,
-			      -type => 'file',
+			      -type => 'string',
 			     );
   foreach my $item ($feed->get_item()) {
     my ($enclosure, $title, $url, $link, $body, $date);
+    
+    # get the enclosure or next
     try {
       # this is undocument, but appears to work
       my $enclosure_val = $item->get_value("enclosure");
@@ -92,25 +116,24 @@ sub parse_and_download {
       }
     } catch { warn $_ };
     next unless $enclosure;
-    # first prepare the body;
+
+    # get the title and the date
     $title = parse_html($item->title()) || "\n";
     $date = $item->pubDate()            || "\n";
+ 
+    # body processing (to store in the file)
     $body = parse_html(
       $item->get("content:encoded") || $item->description()
      ) || "\n";
-    print "=================================================\n";
-    print $body, "\n";
-    print "=================================================\n";
-    print $enclosure, "\n";
-    print "=================================================\n";
-    next;
-    
     if (my $fullpage = $item->link()) {
       try {
-	$body .= parse_html($ua->get($fullpage)->decoded_content);
+	$body .= "Text dump of $fullpage\n"
+	  . parse_html($ua->get($fullpage)->decoded_content)
+	    . "\n";
       } catch { warn $_ };
     }
-    print $body;
+    
+    
 
   }# prepare the file.txt
 }
