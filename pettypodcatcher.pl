@@ -18,6 +18,8 @@ use URI::Split qw/uri_split/;
 use Storable;
 use Date::Parse;
 use Time::Piece;
+use Getopt::Long;
+use YAML::Any qw/LoadFile/;
 
 my $inlinetags = qr{
 		     ^(
@@ -37,6 +39,21 @@ my $mediasuffixes = qr{
 			)
 		    }x;
 
+my $simulate = 0;
+my $limitrate = "300k";
+
+my $options = GetOptions (
+  "simulate" => \$simulate,
+  "limit-rate=s" => \$limitrate,
+ );
+
+if ($limitrate =~ m/(\d+k?)/) {
+  $limitrate = $1;
+} else {
+  $limitrate = "300k";
+}
+
+
 # go there
 my $config = $ARGV[0];
 die "No config passed" unless ($config && -f $config);
@@ -55,16 +72,8 @@ if (-e $oldfeedsfile) {
 }
 
 # parse the config
-my %podcasts;
-open (my $fh, "<:encoding(utf-8)", $filename)
-  or die "Cannot open $filename $!\n";
-while (<$fh>) {
-  if (m/^([\w-]+)\s+(http.*?)\s*$/) {
-    $podcasts{$1} = $2;
-  }
-}
-close $fh;
-exit unless %podcasts;
+my $podcasts = LoadFile($filename);
+exit unless $podcasts;
 
 ## setup the user agent
 my $fakeuseragent = 'Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9.1.16) Gecko/20110929 Iceweasel/3.5.16 (like Firefox/3.5.16)';
@@ -77,7 +86,7 @@ my $treewriter = XML::TreePP->new();
 
 
 # download the feeds
-foreach my $pdc (keys %podcasts) {
+foreach my $pdc (keys %{$podcasts}) {
   make_path("$pdc");
   my $response;
   my $feedfile = $pdc . ".feed";
@@ -92,7 +101,7 @@ foreach my $pdc (keys %podcasts) {
   }
 
   try {
-    $response = $ua->get($podcasts{$pdc}, %header);
+    $response = $ua->get($podcasts->{$pdc}->{url}, %header);
   } catch {
     print $_;
     next;
@@ -101,7 +110,7 @@ foreach my $pdc (keys %podcasts) {
     $oldfeeds->{$pdc}->{etag} = $response->header('Etag');
     $oldfeeds->{$pdc}->{since} = $response->header('Last-Modified') || $response->header('Date');
     print "Working on $feedfile\n";
-    parse_and_download($pdc, $response);
+    parse_and_download($pdc, $response, $podcasts->{$pdc}->{filter});
   }
 }
 
@@ -111,14 +120,14 @@ store $oldfeeds, $oldfeedsfile;
 print "done\n";
 
 sub parse_and_download {
-  my ($pdc, $r) = @_;
+  my ($pdc, $r, $filter) = @_;
   my $feedstring = $r->decoded_content;
   my $feed = XML::FeedPP->new($feedstring,
 			      utf8_flag => 1,
 			      -type => 'string',
 			     );
   foreach my $item ($feed->get_item()) {
-    my $iteminfo = parse_feed_item($pdc, $item);
+    my $iteminfo = parse_feed_item($pdc, $item, $filter);
     next unless $iteminfo;
     if (-e $iteminfo->{showinfo}) {
       # print "skipping " . $iteminfo->{download} . "\n";
@@ -127,10 +136,15 @@ sub parse_and_download {
     my @command = ('wget',
 		   "-U", $fakeuseragent,
 		   "-O", $iteminfo->{filename},
-		   "--limit-rate=300k",
+		   "--limit-rate=$limitrate",
 		   "-c",
 		   $iteminfo->{download});
     
+    if ($simulate) {
+      print join(" ", @command);
+      next;
+    }
+
     my $exitcode = 0;
     system(@command) == 0 or $exitcode = ($? >> 8);
     
@@ -150,7 +164,7 @@ sub parse_and_download {
 
 
 sub parse_feed_item {
-  my ($pdc, $item) = @_;
+  my ($pdc, $item, $filter) = @_;
   my ($enclosure, $title, $url, $link, $body, $date);
 
   # get the enclosure or next
@@ -177,7 +191,9 @@ sub parse_feed_item {
   my ($targetfilename, $suffix) =
     create_sensible_filename($title, $date, $enclosure);
   return unless ($targetfilename and $suffix);
- 
+  
+  return if (($filter) and ($targetfilename !~ m/$filter/i));
+
   # body processing (to store in the file)
   $body .= parse_html($item->get("content:encoded") || $item->description()) . "\n";
   if (my $fullpage = $item->link()) {

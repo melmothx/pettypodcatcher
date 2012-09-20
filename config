@@ -1,8 +1,0 @@
-# each line must have the name (alphanumerical only) followed by the url.
-# everything else is ignore (like these comments)
-
-PlanetBlue http://www.rts.ch/couleur3/programmes/la-planete-bleue/podcast/?flux=rss
-
-HeadPhoneCommute http://reviews.headphonecommute.com/feed/
-
-# space6 http://spacemusic.nl/podcast/spacemusic/season6/space6.xml
