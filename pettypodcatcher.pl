@@ -33,7 +33,7 @@ my $mediasuffixes = qr{
 			  mp3|m4a|flv|
 			  mp4|aac|avi|
 			  ogg|flac|ogm|
-			  pdf|m4b
+			  pdf|m4b|m4v
 			)
 		    }x;
 
@@ -130,17 +130,21 @@ sub parse_and_download {
 		   "--limit-rate=300k",
 		   "-c",
 		   $iteminfo->{download});
-
-    system(@command) == 0 or die "system @command failed: $?";
-    #    print join(" ", @command) . "\n";
-
+    
+    my $exitcode = 0;
+    system(@command) == 0 or $exitcode = ($? >> 8);
+    
     # print the info
-    open (my $fh, ">:encoding(utf-8)", $iteminfo->{showinfo})
-      or die "WTF? $!\n";
-    print $fh $iteminfo->{body};
-    close $fh;
-
-
+    if ($exitcode == 0) {
+      open (my $fh, ">:encoding(utf-8)", $iteminfo->{showinfo})
+	or die "WTF? $!\n";
+      print $fh $iteminfo->{body};
+      close $fh;
+    } elsif ($exitcode == 8) {
+      next
+    } else {
+      die "Unexpected error: $exitcode\n";
+    }
   }
 } 
 
