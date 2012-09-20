@@ -175,11 +175,11 @@ sub parse_feed_item {
   return unless ($targetfilename and $suffix);
  
   # body processing (to store in the file)
-  $body .= parse_html($item->get("content:encoded") || $item->description());
+  $body .= parse_html($item->get("content:encoded") || $item->description()) . "\n";
   if (my $fullpage = $item->link()) {
     unless ($fullpage =~ m/$mediasuffixes$/) {
       try {
-	$body .= "Text dump of $fullpage\n"
+	$body .= "\nText dump of $fullpage\n"
 	  . parse_html($ua->get($fullpage)->decoded_content)
 	    . "\n";
       } catch { warn $_ };
