@@ -28,12 +28,22 @@ my $inlinetags = qr{
 		 }x;
 
 
+my $mediasuffixes = qr{
+			\.(
+			  mp3|m4a|flv|
+			  mp4|aac|avi|
+			  ogg|flac|ogm|
+			  pdf|m4b
+			)
+		    }x;
+
 # go there
 my $config = $ARGV[0];
 die "No config passed" unless ($config && -f $config);
 my ($filename, $filepath) = fileparse($config);
 print $filepath, "\n";
 chdir $filepath or die "Cannot chdir to $filepath $!\n";
+print getcwd();
 
 # old informations
 my $oldfeeds;
@@ -61,7 +71,7 @@ my $fakeuseragent = 'Mozilla/5.0 (X11; U; Linux i686; en-US; rv:1.9.1.16) Gecko/
 my $ua = LWP::UserAgent->new;
 $ua->timeout(10);
 $ua->agent($fakeuseragent);
-$ua->show_progress(1);
+# $ua->show_progress(1);
 my $treewriter = XML::TreePP->new();
 
 
@@ -95,8 +105,10 @@ foreach my $pdc (keys %podcasts) {
   }
 }
 
+# all done
 print "Storing metainfo...";
 store $oldfeeds, $oldfeedsfile;
+print "done\n";
 
 sub parse_and_download {
   my ($pdc, $r) = @_;
@@ -107,11 +119,28 @@ sub parse_and_download {
 			     );
   foreach my $item ($feed->get_item()) {
     my $iteminfo = parse_feed_item($pdc, $item);
-    unless ($iteminfo) {
-      warn "unable to parse " . $item->title() . "\n";
+    next unless $iteminfo;
+    if (-e $iteminfo->{showinfo}) {
+      # print "skipping " . $iteminfo->{download} . "\n";
       next;
     }
-    print Dumper($iteminfo);
+    my @command = ('wget',
+		   "-U", $fakeuseragent,
+		   "-O", $iteminfo->{filename},
+		   "--limit-rate=300k",
+		   "-c",
+		   $iteminfo->{download});
+
+    system(@command) == 0 or die "system @command failed: $?";
+    #    print join(" ", @command) . "\n";
+
+    # print the info
+    open (my $fh, ">:encoding(utf-8)", $iteminfo->{showinfo})
+      or die "WTF? $!\n";
+    print $fh $iteminfo->{body};
+    close $fh;
+
+
   }
 } 
 
@@ -128,11 +157,13 @@ sub parse_feed_item {
       $enclosure = $enclosure_val->{-url};
     }
   } catch { warn $_; return };
-  return unless $enclosure;
+  warn "No enclosure for " . $item->title() . "\n"  unless $enclosure;
+  return                                            unless $enclosure;
 
   # get the title and the date
   $title = parse_html($item->title());
-  return unless $title;		# title is mandatory for us, ok?
+  warn "No title?\n" unless $title;
+  return             unless $title; # title is mandatory for us, ok?
   $body = $title . "\n\n";
 
   # the time
@@ -141,15 +172,18 @@ sub parse_feed_item {
 
   my ($targetfilename, $suffix) =
     create_sensible_filename($title, $date, $enclosure);
+  return unless ($targetfilename and $suffix);
  
   # body processing (to store in the file)
   $body .= parse_html($item->get("content:encoded") || $item->description());
   if (my $fullpage = $item->link()) {
-    try {
-      $body .= "Text dump of $fullpage\n"
-	. parse_html($ua->get($fullpage)->decoded_content)
-	  . "\n";
-    } catch { warn $_ };
+    unless ($fullpage =~ m/$mediasuffixes$/) {
+      try {
+	$body .= "Text dump of $fullpage\n"
+	  . parse_html($ua->get($fullpage)->decoded_content)
+	    . "\n";
+      } catch { warn $_ };
+    }
   }
   return { filename => File::Spec->catfile(getcwd(), $pdc,
 					   $targetfilename . "$suffix"),
@@ -167,11 +201,9 @@ sub create_sensible_filename {
   my $name = _normalize_title($title) || "X";
   my ($scheme, $auth, $path, $query, $frag) = uri_split($enclosure);
   return unless $path;
-  my ($basename, $remotepath, $suffix) = fileparse($path,
-						   ".mp3", ".m4a", ".flv",
-						   ".mp4", ".aac", ".avi",
-						   ".ogg", ".flac", ".ogm",
-						  );
+  my ($basename, $remotepath, $suffix) = fileparse($path, $mediasuffixes);
+  warn "NO SUFFIX FOUND! in $basename\n" unless $suffix;
+  return unless $suffix;
   return $date_prefix . "-" . $name, $suffix;
 }
 
@@ -184,6 +216,7 @@ sub _normalize_title {
   if ((length($crap) > 2) and (length($crap) < 200)) {
     return $crap
   } else {
+    warn "WARNING: resulting filename too long: $crap\n";
     return undef
   }
 }
