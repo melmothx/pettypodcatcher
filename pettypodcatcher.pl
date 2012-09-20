@@ -16,7 +16,8 @@ use Data::Dumper;
 use Try::Tiny;
 use URI::Split qw/uri_split/;
 use Storable;
-
+use Date::Parse;
+use Time::Piece;
 
 my $inlinetags = qr{
 		     ^(
@@ -40,7 +41,7 @@ my $oldfeedsfile = 'oldfeeds.db';
 if (-e $oldfeedsfile) {
   $oldfeeds = retrieve($oldfeedsfile);
 } else {
-  die "Couldn't retrieve $oldfeedsfile";
+  $oldfeeds = {}
 }
 
 # parse the config
@@ -48,7 +49,7 @@ my %podcasts;
 open (my $fh, "<:encoding(utf-8)", $filename)
   or die "Cannot open $filename $!\n";
 while (<$fh>) {
-  if (m/([\w-]+)\s+(http.*?)\s*$/) {
+  if (m/^([\w-]+)\s+(http.*?)\s*$/) {
     $podcasts{$1} = $2;
   }
 }
@@ -90,7 +91,7 @@ foreach my $pdc (keys %podcasts) {
     $oldfeeds->{$pdc}->{etag} = $response->header('Etag');
     $oldfeeds->{$pdc}->{since} = $response->header('Last-Modified') || $response->header('Date');
     print "Working on $feedfile\n";
-    parse_and_download($response);
+    parse_and_download($pdc, $response);
   }
 }
 
@@ -98,61 +99,98 @@ print "Storing metainfo...";
 store $oldfeeds, $oldfeedsfile;
 
 sub parse_and_download {
-  my $r = shift;
+  my ($pdc, $r) = @_;
   my $feedstring = $r->decoded_content;
   my $feed = XML::FeedPP->new($feedstring,
 			      utf8_flag => 1,
 			      -type => 'string',
 			     );
   foreach my $item ($feed->get_item()) {
-    my ($enclosure, $title, $url, $link, $body, $date);
-    
-    # get the enclosure or next
-    try {
-      # this is undocument, but appears to work
-      my $enclosure_val = $item->get_value("enclosure");
-      if (defined $enclosure_val) {
-	$enclosure = $enclosure_val->{-url};
-      }
-    } catch { warn $_ };
-    next unless $enclosure;
-
-    # get the title and the date
-    $title = parse_html($item->title()) || "\n";
-    $date = $item->pubDate()            || "\n";
- 
-    # body processing (to store in the file)
-    $body = parse_html(
-      $item->get("content:encoded") || $item->description()
-     ) || "\n";
-    if (my $fullpage = $item->link()) {
-      try {
-	$body .= "Text dump of $fullpage\n"
-	  . parse_html($ua->get($fullpage)->decoded_content)
-	    . "\n";
-      } catch { warn $_ };
+    my $iteminfo = parse_feed_item($pdc, $item);
+    unless ($iteminfo) {
+      warn "unable to parse " . $item->title() . "\n";
+      next;
     }
-    
-    
+    print Dumper($iteminfo);
+  }
+} 
 
-  }# prepare the file.txt
+
+sub parse_feed_item {
+  my ($pdc, $item) = @_;
+  my ($enclosure, $title, $url, $link, $body, $date);
+
+  # get the enclosure or next
+  try {
+    # this is undocument, but appears to work
+    my $enclosure_val = $item->get_value("enclosure");
+    if (defined $enclosure_val) {
+      $enclosure = $enclosure_val->{-url};
+    }
+  } catch { warn $_; return };
+  return unless $enclosure;
+
+  # get the title and the date
+  $title = parse_html($item->title());
+  return unless $title;		# title is mandatory for us, ok?
+  $body = $title . "\n\n";
+
+  # the time
+  $date = $item->pubDate() || localtime->strftime();
+  $body .= $date . "\n";
+
+  my ($targetfilename, $suffix) =
+    create_sensible_filename($title, $date, $enclosure);
+ 
+  # body processing (to store in the file)
+  $body .= parse_html($item->get("content:encoded") || $item->description());
+  if (my $fullpage = $item->link()) {
+    try {
+      $body .= "Text dump of $fullpage\n"
+	. parse_html($ua->get($fullpage)->decoded_content)
+	  . "\n";
+    } catch { warn $_ };
+  }
+  return { filename => File::Spec->catfile(getcwd(), $pdc,
+					   $targetfilename . "$suffix"),
+	   showinfo => File::Spec->catfile(getcwd(), $pdc,
+					   $targetfilename . ".txt"),
+	   body     => $body,
+	   download => $enclosure };
 }
 
-
 sub create_sensible_filename {
+  my ($title, $date, $enclosure) = @_;
+  my $output;
+  my $time = localtime(str2time($date));
+  my $date_prefix = $time->ymd;
+  my $name = _normalize_title($title) || "X";
+  my ($scheme, $auth, $path, $query, $frag) = uri_split($enclosure);
+  return unless $path;
+  my ($basename, $remotepath, $suffix) = fileparse($path,
+						   ".mp3", ".m4a", ".flv",
+						   ".mp4", ".aac", ".avi",
+						   ".ogg", ".flac", ".ogm",
+						  );
+  return $date_prefix . "-" . $name, $suffix;
+}
+
+sub _normalize_title {
   my $crap = shift;
   $crap =~ s/[^A-Za-z0-9-]/-/gs;
   $crap =~ s/^-*//gs;
   $crap =~ s/-*$//gs;
   $crap =~ s/--+/-/gs;
-  return if (length($crap) > 250);
-  return if (length($crap) < 3);
-  return $crap;
+  if ((length($crap) > 2) and (length($crap) < 200)) {
+    return $crap
+  } else {
+    return undef
+  }
 }
 
 
 sub parse_html {
-  my ($html, $dontsavelinks) = @_;
+  my $html = shift;
   return " " unless $html;
   if (ref $html eq "HASH") {
     my $tree = $treewriter->write($html);
