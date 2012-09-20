@@ -1,5 +1,8 @@
-# each line must have the name (alphanumerical only) followed by the url.
-# everything else is ignore (like these comments)
+# each line must have the name (alphanumerical only) followed by the
+# url.  everything else is ignore (like these comments) the
+# match/ignore filtering are regexp. They are interpolated literally,
+# with m/$value/i The matching is done against the resulting filename
+# (taken from the title + date prefix)
 
 PlanetBlue:
   url: 'http://www.rts.ch/couleur3/programmes/la-planete-bleue/podcast/?flux=rss'
@@ -7,6 +10,8 @@ PlanetBlue:
 HeadPhoneCommute:
   url: 'http://reviews.headphonecommute.com/feed/'
 
-SpaceMusicNL6:
-  url: 'http://spacemusic.nl/podcast/spacemusic/season6/space6.xml'
-  filter: 'space.*music'
+SpaceMusicNL7:
+  url: 'http://spacemusic.nl/podcast/spacemusic/season7/space7.xml'
+  filter:
+    match: 'space.*music'
+    ignore: 'fresh.*air'

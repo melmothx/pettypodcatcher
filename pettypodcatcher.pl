@@ -141,24 +141,16 @@ sub parse_and_download {
 		   $iteminfo->{download});
     
     if ($simulate) {
-      print join(" ", @command);
+      print join(" ", @command), "\n";
       next;
     }
 
-    my $exitcode = 0;
-    system(@command) == 0 or $exitcode = ($? >> 8);
+    system(@command) == 0 or die "Execution of @command failed: $?\n";
     
-    # print the info
-    if ($exitcode == 0) {
-      open (my $fh, ">:encoding(utf-8)", $iteminfo->{showinfo})
-	or die "WTF? $!\n";
-      print $fh $iteminfo->{body};
-      close $fh;
-    } elsif ($exitcode == 8) {
-      next
-    } else {
-      die "Unexpected error: $exitcode\n";
-    }
+    open (my $fh, ">:encoding(utf-8)", $iteminfo->{showinfo})
+      or die "WTF? $!\n";
+    print $fh $iteminfo->{body};
+    close $fh;
   }
 } 
 
@@ -192,6 +184,16 @@ sub parse_feed_item {
     create_sensible_filename($title, $date, $enclosure);
   return unless ($targetfilename and $suffix);
   
+  # filtering. return unless it match, return if in ignore
+  if ($filter) {
+    if (my $match = $filter->{match}) {
+      return unless $targetfilename =~ m/$match/i;
+    }
+    if (my $ignore = $filter->{ignore}) {
+      return if $targetfilename =~ m/$ignore/i;
+    }
+  }
+
   return if (($filter) and ($targetfilename !~ m/$filter/i));
 
   # body processing (to store in the file)
