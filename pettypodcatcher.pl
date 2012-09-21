@@ -50,7 +50,7 @@ my $mediasuffixes = qr{
 			  mp3|m4a|flv|
 			  mp4|aac|avi|
 			  ogg|flac|ogm|
-			  pdf|m4b|m4v
+			  pdf|m4b|m4v|zip
 			)
 		    }x;
 
