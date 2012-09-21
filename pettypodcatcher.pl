@@ -54,16 +54,18 @@ my $mediasuffixes = qr{
 			)
 		    }x;
 
-my $simulate = 0;
+my $simulate;
 my $limitrate = "300k";
-my $debug = 0;
+my $debug;
 my $logfile = "petty.log";
+my $verbose;
 
 my $options = GetOptions (
   "simulate"     => \$simulate,
   "limit-rate=s" => \$limitrate,
   "debug"        => \$debug,
   "log-file=s"   => \$logfile,
+  "verbose"      => \$verbose,
  );
 
 if ($limitrate =~ m/(\d+k?)/) {
@@ -156,17 +158,22 @@ sub parse_and_download {
     my @command = ('wget',
 		   "-U", $fakeuseragent,
 		   "-O", $iteminfo->{filename},
-		   "--limit-rate=$limitrate",
-		   "-c",
-		   $iteminfo->{download});
+		   "--limit-rate=$limitrate");
+    unless ($verbose) {
+      push @command, '--quiet';
+    };
+    push @command, "-c", $iteminfo->{download};
     
     if ($simulate) {
       print join(" ", @command), "\n";
       next;
     }
 
+    write_log("executing " . join(" ", @command));
+    print "Downloading in " . $iteminfo->{filename} . "... ";
     system(@command) == 0 or die "Execution of @command failed: $?\n";
-    print "File saved in " . $iteminfo->{filename} . "\n";
+    print "Done\n";
+
     open (my $fh, ">:encoding(utf-8)", $iteminfo->{showinfo})
       or die "WTF? $!\n";
     print $fh $iteminfo->{body};
