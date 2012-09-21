@@ -231,15 +231,16 @@ sub create_sensible_filename {
 
 sub _normalize_title {
   my $crap = shift;
+  return unless $crap;
+  $crap = substr $crap, 0, 200; # be sure to have a sensible “short” name
   $crap =~ s/[^A-Za-z0-9-]/-/gs;
   $crap =~ s/^-*//gs;
   $crap =~ s/-*$//gs;
   $crap =~ s/--+/-/gs;
-  if ((length($crap) > 2) and (length($crap) < 200)) {
-    return $crap
+  if (length($crap < 2)) {
+    return undef;
   } else {
-    warn "WARNING: resulting filename too long: $crap\n";
-    return undef
+    return $crap
   }
 }
 
