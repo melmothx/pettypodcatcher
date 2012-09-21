@@ -11,7 +11,7 @@ Because it's fun :-)
 
 ## Ok, why is this something different?
 
-This podcatcher doesn't try to be too smart, but has some nice feature.
+This podcatcher doesn't try to be too smart, but has some nice features.
 
  - If the file is named podcast.mp3, after the downloading is
    complete, the tracklist, the description and the master page
@@ -21,7 +21,7 @@ This podcatcher doesn't try to be too smart, but has some nice feature.
  
  - Reg-Exp filtering on the episode title (both match/ignore). 
 
- - Partial content supported (via wget).
+ - Partial content supported (via `wget`).
  
  - Consistent naming convention: date-title.ext
 
@@ -74,6 +74,9 @@ specified by the command line argument `--log-file`.
 You can limit the rate of the downloading passing `--limit-rate` and a
 numeric value (optionally followed by "k"). See the `wget` manpage for
 details. Defaults to 300k.
+
+The `--verbose` option let you see the output of wget in real
+time. Don't use this for your cronjobs.
 
 Example:
 
