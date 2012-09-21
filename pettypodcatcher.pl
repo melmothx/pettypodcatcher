@@ -20,6 +20,7 @@ use warnings;
 use utf8;
 binmode STDOUT, ":encoding(utf-8)";
 
+use Fcntl qw(:flock);
 use XML::FeedPP;
 use HTML::PullParser;
 use LWP::UserAgent;
@@ -79,8 +80,30 @@ if ($limitrate =~ m/(\d+k?)/) {
 my $config = $ARGV[0];
 die "No config passed" unless ($config && -f $config);
 my ($filename, $filepath) = fileparse($config);
-write_log(localtime() . ": switching dir in $filepath");
 chdir $filepath or die "Cannot chdir to $filepath $!\n";
+
+# locking
+my $pidfile;
+open ($pidfile, "+<", "petty.pid")
+  or open ($pidfile, ">", "petty.pid")
+  or die "Cannot open petty.pid";
+flock($pidfile, LOCK_EX) or die "Cannot lock the pidfile $!";
+while (<$pidfile>) {
+  my $otherpid = $_;
+  chomp $otherpid;
+  if (kill 0, $otherpid) {
+    print "Found a process $otherpid running, exiting...\n";
+    exit 1;
+  }
+}
+seek $pidfile, 0, 0;
+print $pidfile $$, "\n";
+flock($pidfile, LOCK_UN) or die "Cannot unlock the pidfile $!";
+close $pidfile;
+undef $pidfile;
+
+
+
 write_log("Landed in " . getcwd());
 
 # old informations
