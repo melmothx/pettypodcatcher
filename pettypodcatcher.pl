@@ -41,10 +41,14 @@ my $mediasuffixes = qr{
 
 my $simulate = 0;
 my $limitrate = "300k";
+my $debug = 0;
+my $logfile = "petty.log";
 
 my $options = GetOptions (
-  "simulate" => \$simulate,
+  "simulate"     => \$simulate,
   "limit-rate=s" => \$limitrate,
+  "debug"        => \$debug,
+  "log-file=s"   => \$logfile,
  );
 
 if ($limitrate =~ m/(\d+k?)/) {
@@ -58,9 +62,9 @@ if ($limitrate =~ m/(\d+k?)/) {
 my $config = $ARGV[0];
 die "No config passed" unless ($config && -f $config);
 my ($filename, $filepath) = fileparse($config);
-print $filepath, "\n";
+write_log(localtime() . ": switching dir in $filepath");
 chdir $filepath or die "Cannot chdir to $filepath $!\n";
-print getcwd();
+write_log("Landed in " . getcwd());
 
 # old informations
 my $oldfeeds;
@@ -89,7 +93,6 @@ my $treewriter = XML::TreePP->new();
 foreach my $pdc (keys %{$podcasts}) {
   make_path("$pdc");
   my $response;
-  my $feedfile = $pdc . ".feed";
 
   # setup the header
   my %header;
@@ -103,21 +106,21 @@ foreach my $pdc (keys %{$podcasts}) {
   try {
     $response = $ua->get($podcasts->{$pdc}->{url}, %header);
   } catch {
-    print $_;
+    warn $_;
     next;
   };
   if ($response->is_success) {
     $oldfeeds->{$pdc}->{etag} = $response->header('Etag');
     $oldfeeds->{$pdc}->{since} = $response->header('Last-Modified') || $response->header('Date');
-    print "Working on $feedfile\n";
+    write_log("Working on $pdc");
     parse_and_download($pdc, $response, $podcasts->{$pdc}->{filter});
   }
 }
 
 # all done
-print "Storing metainfo...";
+write_log("Storing metainfo...");
 store $oldfeeds, $oldfeedsfile;
-print "done\n";
+write_log("done on " . localtime());
 
 sub parse_and_download {
   my ($pdc, $r, $filter) = @_;
@@ -130,7 +133,9 @@ sub parse_and_download {
     my $iteminfo = parse_feed_item($pdc, $item, $filter);
     next unless $iteminfo;
     if (-e $iteminfo->{showinfo}) {
-      # print "skipping " . $iteminfo->{download} . "\n";
+      write_log("skipping " . $iteminfo->{download}
+		  . ": " . $iteminfo->{filename}
+		    . " already downloaded");
       next;
     }
     my @command = ('wget',
@@ -146,7 +151,7 @@ sub parse_and_download {
     }
 
     system(@command) == 0 or die "Execution of @command failed: $?\n";
-    
+    print "File saved in " . $iteminfo->{filename} . "\n";
     open (my $fh, ">:encoding(utf-8)", $iteminfo->{showinfo})
       or die "WTF? $!\n";
     print $fh $iteminfo->{body};
@@ -167,13 +172,13 @@ sub parse_feed_item {
       $enclosure = $enclosure_val->{-url};
     }
   } catch { warn $_; return };
-  warn "No enclosure for " . $item->title() . "\n"  unless $enclosure;
-  return                                            unless $enclosure;
+  write_log("No enclosure for " . $item->title()) unless $enclosure;
+  return unless $enclosure;
 
   # get the title and the date
   $title = parse_html($item->title());
-  warn "No title?\n" unless $title;
-  return             unless $title; # title is mandatory for us, ok?
+  write_log("No title found in $pdc" . Dumper($item)) unless $title;
+  return unless $title; # title is mandatory for us
   $body = $title . "\n\n";
 
   # the time
@@ -187,15 +192,19 @@ sub parse_feed_item {
   # filtering. return unless it match, return if in ignore
   if ($filter) {
     if (my $match = $filter->{match}) {
-      return unless $targetfilename =~ m/$match/i;
+      unless ($targetfilename =~ m/$match/i) {
+	write_log("Ignoring $targetfilename, doesn't match\n");
+	return
+      }
     }
     if (my $ignore = $filter->{ignore}) {
-      return if $targetfilename =~ m/$ignore/i;
+      if ($targetfilename =~ m/$ignore/i) {
+	write_log("Ignoring $targetfilename, in ignore");
+	return
+      }
     }
   }
-
-  return if (($filter) and ($targetfilename !~ m/$filter/i));
-
+  
   # body processing (to store in the file)
   $body .= parse_html($item->get("content:encoded") || $item->description()) . "\n";
   if (my $fullpage = $item->link()) {
@@ -224,7 +233,7 @@ sub create_sensible_filename {
   my ($scheme, $auth, $path, $query, $frag) = uri_split($enclosure);
   return unless $path;
   my ($basename, $remotepath, $suffix) = fileparse($path, $mediasuffixes);
-  warn "NO SUFFIX FOUND! in $basename\n" unless $suffix;
+  write_log("NO SUFFIX FOUND! in $basename: skipping") unless $suffix;
   return unless $suffix;
   return $date_prefix . "-" . $name, $suffix;
 }
@@ -237,7 +246,7 @@ sub _normalize_title {
   $crap =~ s/^-*//gs;
   $crap =~ s/-*$//gs;
   $crap =~ s/--+/-/gs;
-  if (length($crap < 2)) {
+  if (length($crap) < 2) {
     return undef;
   } else {
     return $crap
@@ -306,3 +315,13 @@ sub parse_html {
   return $result;
 };
 
+sub write_log {
+  my $log = shift;
+  if ($debug) {
+    print $log, "\n";
+  }
+  open (my $fh, ">>:encoding(utf-8)", $logfile)
+    or die "Cannot open logfile $!\n";
+  print $fh $log, "\n";
+  close $fh;
+}
