@@ -91,7 +91,8 @@ flock($pidfile, LOCK_EX) or die "Cannot lock the pidfile $!";
 while (<$pidfile>) {
   my $otherpid = $_;
   chomp $otherpid;
-  if (kill 0, $otherpid) {
+  next unless $otherpid =~ m/(\d+)/;
+  if (kill 0, $1) {
     print "Found a process $otherpid running, exiting...\n";
     exit 1;
   }
@@ -227,8 +228,9 @@ sub parse_feed_item {
   $body = $title . "\n\n";
 
   # the time
-  $date = $item->pubDate() || localtime->strftime();
-  $body .= $date . "\n";
+  if ($date = $item->pubDate()) {
+    $body .= $date . "\n";
+  }
 
   my ($targetfilename, $suffix) =
     create_sensible_filename($title, $date, $enclosure);
@@ -271,16 +273,28 @@ sub parse_feed_item {
 
 sub create_sensible_filename {
   my ($title, $date, $enclosure) = @_;
-  my $output;
-  my $time = localtime(str2time($date));
-  my $date_prefix = $time->ymd;
-  my $name = _normalize_title($title) || "X";
+  my ($date_prefix, $name);
+  if ($date) {
+    try {
+      $date_prefix = localtime(str2time($date))->ymd;
+    };
+  };
+  $name = _normalize_title($title);
+  
   my ($scheme, $auth, $path, $query, $frag) = uri_split($enclosure);
   return unless $path;
   my ($basename, $remotepath, $suffix) = fileparse($path, $mediasuffixes);
   write_log("NO SUFFIX FOUND! in $basename: skipping") unless $suffix;
-  return unless $suffix;
-  return $date_prefix . "-" . $name, $suffix;
+
+  unless ($name) {
+    $name = _normalize_title($basename);
+  };
+  return unless $name && $suffix;
+
+  if ($date_prefix) {
+    $name = $date_prefix . "-" . $name;
+  }
+  return $name, $suffix;
 }
 
 sub _normalize_title {
